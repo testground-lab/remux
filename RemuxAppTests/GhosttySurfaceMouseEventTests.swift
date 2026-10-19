@@ -70,7 +70,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
             XCTAssertEqual(
                 GhosttySurfaceTapGesture.input(
                     forLocalPoint: CGPoint(x: 300, y: y),
-                    agent: .claudeCode,
+                    isClaudeCode: true,
                     cursorFrame: cursor
                 ),
                 .composer,
@@ -86,7 +86,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
             XCTAssertEqual(
                 GhosttySurfaceTapGesture.input(
                     forLocalPoint: CGPoint(x: 44, y: y),
-                    agent: .claudeCode,
+                    isClaudeCode: true,
                     cursorFrame: cursor
                 ),
                 .focus,
@@ -99,7 +99,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
         XCTAssertEqual(
             GhosttySurfaceTapGesture.input(
                 forLocalPoint: CGPoint(x: 10, y: 20),
-                agent: .claudeCode,
+                isClaudeCode: true,
                 cursorFrame: nil
             ),
             .focus
@@ -110,7 +110,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
         XCTAssertEqual(
             GhosttySurfaceTapGesture.input(
                 forLocalPoint: CGPoint(x: 10, y: 600),
-                agent: nil,
+                isClaudeCode: false,
                 cursorFrame: CGRect(x: 40, y: 200, width: 8, height: 16)
             ),
             .terminalKeyboard
@@ -124,7 +124,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
             GhosttySurfaceTapGesture.actions(
                 forLocalPoint: point,
                 mouseCaptured: true,
-                agent: .claudeCode,
+                isClaudeCode: true,
                 cursorFrame: CGRect(x: 40, y: 200, width: 8, height: 16)
             ),
             [

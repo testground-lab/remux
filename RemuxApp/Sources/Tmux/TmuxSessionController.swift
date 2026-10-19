@@ -234,6 +234,7 @@ final class TmuxSessionController: @unchecked Sendable {
     private var successfulMutationRequiredAfterRevision: UInt64?
     private var viewportClaimAwaitingTopology = false
     private var topologyRevision: UInt64 = 0
+    private var paneMetadataRefreshThrottle = TmuxPaneMetadataRefreshThrottle()
     private var outboundSink: (@Sendable (Data) -> Void)?
     private var shuttingDown = false
 
@@ -987,23 +988,47 @@ final class TmuxSessionController: @unchecked Sendable {
     func requestRefreshWindowPaneMetadata(windowID: TmuxWindowID) {
         queue.async { [self] in
             preconditionOnWriterQueue()
-            guard let client, outboundSink != nil, !shuttingDown else { return }
-            guard topology?.windows.contains(where: { $0.id == windowID }) == true else {
-                return
-            }
-            let result = ghostty_tmux_client_refresh_window_pane_metadata(
-                client,
-                windowID.rawValue
-            )
-            guard result == GHOSTTY_TMUX_RESULT_OK else {
-                if result == GHOSTTY_TMUX_RESULT_CLIENT_FAILED
-                    || result == GHOSTTY_TMUX_RESULT_CLOSED {
-                    handleClientFailure(result)
+            guard canRefreshPaneMetadata(windowID: windowID) else { return }
+            switch paneMetadataRefreshThrottle.request(
+                windowID,
+                now: ProcessInfo.processInfo.systemUptime
+            ) {
+            case .send:
+                submitPaneMetadataRefreshOnWriter(windowID: windowID)
+            case .sendAfter(let delay):
+                queue.asyncAfter(deadline: .now() + delay) { [self] in
+                    paneMetadataRefreshThrottle.sendDeferred(
+                        windowID,
+                        now: ProcessInfo.processInfo.systemUptime
+                    )
+                    submitPaneMetadataRefreshOnWriter(windowID: windowID)
                 }
-                return
+            case .coalesced:
+                break
             }
-            _ = drainOutbound()
         }
+    }
+
+    private func canRefreshPaneMetadata(windowID: TmuxWindowID) -> Bool {
+        client != nil && outboundSink != nil && !shuttingDown
+            && topology?.windows.contains(where: { $0.id == windowID }) == true
+    }
+
+    private func submitPaneMetadataRefreshOnWriter(windowID: TmuxWindowID) {
+        preconditionOnWriterQueue()
+        guard canRefreshPaneMetadata(windowID: windowID), let client else { return }
+        let result = ghostty_tmux_client_refresh_window_pane_metadata(
+            client,
+            windowID.rawValue
+        )
+        guard result == GHOSTTY_TMUX_RESULT_OK else {
+            if result == GHOSTTY_TMUX_RESULT_CLIENT_FAILED
+                || result == GHOSTTY_TMUX_RESULT_CLOSED {
+                handleClientFailure(result)
+            }
+            return
+        }
+        _ = drainOutbound()
     }
 
     func reclaimActiveViewport() {

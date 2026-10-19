@@ -127,19 +127,55 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(writes.first).isEmpty)
     }
 
-    func testWindowRenameRefreshesItsPaneMetadata() async throws {
+    func testWindowRenameRefreshesItsPaneMetadataOnce() async throws {
+        let topologyRecorder = ControllerTopologyRecorder()
+        let harness = try await readyController(
+            listWindowsBody: Self.threePaneZoomedWindow,
+            expectedPaneCount: 3,
+            callbacks: .init(onTopology: { topologyRecorder.append($0) })
+        )
+        var nextCommandNumber = harness.nextCommandNumber
+
+        harness.controller.pump(Data("%window-renamed @0 claude\n".utf8))
+        await drain(harness.controller)
+        await drain(harness.controller)
+        let writes = harness.recorder.takeStrings()
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(try XCTUnwrap(writes.first).hasPrefix("list-panes -t @0 "))
+
+        harness.controller.pump(Data(responseBlock(
+            commandNumber: &nextCommandNumber,
+            body: "%0;claude;/tmp\n"
+        ).utf8))
+        try await waitUntil("the metadata reply did not publish topology") {
+            topologyRecorder.latest?.panes.first(where: { $0.id == 0 })?.currentCommand
+                == "claude"
+        }
+        // A deferred refresh would land within the throttle interval.
+        try await Task.sleep(for: .seconds(TmuxPaneMetadataRefreshThrottle.interval + 0.2))
+        await drain(harness.controller)
+        XCTAssertTrue(
+            harness.recorder.takeStrings().isEmpty,
+            "a reply that keeps window names must not refresh again"
+        )
+    }
+
+    func testRepeatedWindowPaneMetadataRefreshIsDeferredToOneMoreRequest() async throws {
         let harness = try await readyController(
             listWindowsBody: Self.threePaneZoomedWindow,
             expectedPaneCount: 3
         )
 
-        harness.controller.pump(Data("%window-renamed @0 claude\n".utf8))
+        for _ in 0..<3 {
+            harness.controller.requestRefreshWindowPaneMetadata(windowID: 0)
+        }
         await drain(harness.controller)
-        await drain(harness.controller)
+        XCTAssertEqual(harness.recorder.takeStrings().count, 1)
 
-        let writes = harness.recorder.takeStrings()
-        XCTAssertEqual(writes.count, 1)
-        XCTAssertTrue(try XCTUnwrap(writes.first).hasPrefix("list-panes -t @0 "))
+        try await waitUntil("the deferred refresh was not written") {
+            harness.recorder.hasWrites
+        }
+        XCTAssertEqual(harness.recorder.takeStrings().count, 1)
     }
 
     func testWindowPaneMetadataRefreshIgnoresUnknownWindow() async throws {

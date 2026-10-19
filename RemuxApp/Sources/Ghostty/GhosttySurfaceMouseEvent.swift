@@ -163,11 +163,15 @@ struct GhosttySurfaceTapGesture {
     static func actions(
         forLocalPoint point: CGPoint,
         mouseCaptured: Bool,
-        agent: GhosttyPaneAgent? = nil,
+        isClaudeCode: Bool = false,
         cursorFrame: CGRect? = nil
     ) -> [Action] {
         var actions: [Action] = [
-            .activateInput(input(forLocalPoint: point, agent: agent, cursorFrame: cursorFrame)),
+            .activateInput(input(
+                forLocalPoint: point,
+                isClaudeCode: isClaudeCode,
+                cursorFrame: cursorFrame
+            )),
         ]
         guard mouseCaptured else { return actions }
 
@@ -183,16 +187,12 @@ struct GhosttySurfaceTapGesture {
     /// raises a keyboard, and it belongs to the composer.
     static func input(
         forLocalPoint point: CGPoint,
-        agent: GhosttyPaneAgent?,
+        isClaudeCode: Bool,
         cursorFrame: CGRect?
     ) -> GhosttySurfaceTapInput {
-        switch agent {
-        case nil:
-            return .terminalKeyboard
-        case .claudeCode:
-            guard let cursorFrame, cursorFrame.height > 0 else { return .focus }
-            let rowOffset = ((point.y - cursorFrame.minY) / cursorFrame.height).rounded(.down)
-            return abs(rowOffset) <= agentPromptRowTolerance ? .composer : .focus
-        }
+        guard isClaudeCode else { return .terminalKeyboard }
+        guard let cursorFrame, cursorFrame.height > 0 else { return .focus }
+        let rowOffset = ((point.y - cursorFrame.minY) / cursorFrame.height).rounded(.down)
+        return abs(rowOffset) <= agentPromptRowTolerance ? .composer : .focus
     }
 }

@@ -613,13 +613,13 @@ private final class GhosttyCompositeViewportContainerView: UIView,
         if container.consumeMomentumCatchTap() == true {
             return
         }
-        let agent = projection.panes.first(where: { $0.id == surfaceID })
-            .flatMap { GhosttyPaneAgent(currentCommand: $0.currentCommand) }
+        let isClaudeCode = projection.panes.first(where: { $0.id == surfaceID })
+            .map { GhosttyPaneAgent.isClaudeCode($0.currentCommand) } ?? false
         for action in GhosttySurfaceTapGesture.actions(
             forLocalPoint: recognizer.location(in: surface.view),
             mouseCaptured: mouseCaptured,
-            agent: agent,
-            cursorFrame: agent == nil ? nil : surface.controlSurface.cursorGeometry()
+            isClaudeCode: isClaudeCode,
+            cursorFrame: isClaudeCode ? surface.controlSurface.cursorGeometry() : nil
         ) {
             switch action {
             case .activateInput(let input):

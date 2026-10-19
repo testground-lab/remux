@@ -2,6 +2,28 @@ import XCTest
 @testable import Remux
 
 final class GhosttyTerminalInputCoordinatorTests: XCTestCase {
+    func testComposerTapRequestsKeyboardWhenKeyboardIsHidden() {
+        let coordinator = GhosttyTerminalInputCoordinator()
+
+        XCTAssertTrue(coordinator.composerTapRequestsKeyboard(composerWasPresented: false))
+        XCTAssertTrue(coordinator.composerTapRequestsKeyboard(composerWasPresented: true))
+    }
+
+    func testComposerTapLeavesTerminalKeyboardToOpeningComposerHandoff() {
+        var coordinator = GhosttyTerminalInputCoordinator()
+        coordinator.showSystemKeyboard(isInputAvailable: true)
+
+        XCTAssertFalse(coordinator.composerTapRequestsKeyboard(composerWasPresented: false))
+        XCTAssertTrue(coordinator.composerTapRequestsKeyboard(composerWasPresented: true))
+    }
+
+    func testComposerTapIgnoresKeyboardTheComposerAlreadyOwns() {
+        var coordinator = GhosttyTerminalInputCoordinator()
+        coordinator.showSystemKeyboard(owner: .composer, isOwnerAvailable: true)
+
+        XCTAssertFalse(coordinator.composerTapRequestsKeyboard(composerWasPresented: true))
+    }
+
     func testShowSystemKeyboardActivatesTerminalWhenInputIsAvailable() {
         var coordinator = GhosttyTerminalInputCoordinator()
 

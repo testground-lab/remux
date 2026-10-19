@@ -64,6 +64,20 @@ struct GhosttyTerminalInputCoordinator: Equatable {
         hideKeyboard()
     }
 
+    /// Whether a tap aimed at the composer must request its keyboard. A
+    /// terminal keyboard is handed over instead when a composer that is just
+    /// opening attaches its text view.
+    func composerTapRequestsKeyboard(composerWasPresented: Bool) -> Bool {
+        switch (keyboardMode, keyboardOwner) {
+        case (.system, .composer):
+            false
+        case (.system, .terminal):
+            composerWasPresented
+        default:
+            true
+        }
+    }
+
     mutating func refocusSystemKeyboardIfActive(isInputAvailable: Bool) {
         guard keyboardMode == .system, keyboardOwner == .terminal else { return }
         showSystemKeyboard(isInputAvailable: isInputAvailable)
