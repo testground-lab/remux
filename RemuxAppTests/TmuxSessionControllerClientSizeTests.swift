@@ -129,10 +129,12 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
 
     func testWindowRenameRefreshesItsPaneMetadataOnce() async throws {
         let topologyRecorder = ControllerTopologyRecorder()
+        let timing = ControllerRefreshTiming()
         let harness = try await readyController(
             listWindowsBody: Self.threePaneZoomedWindow,
             expectedPaneCount: 3,
-            callbacks: .init(onTopology: { topologyRecorder.append($0) })
+            callbacks: .init(onTopology: { topologyRecorder.append($0) }),
+            paneMetadataRefreshTiming: timing.timing
         )
         var nextCommandNumber = harness.nextCommandNumber
 
@@ -147,23 +149,25 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
             commandNumber: &nextCommandNumber,
             body: "%0;claude;/tmp\n"
         ).utf8))
+        await drain(harness.controller)
+        await drain(harness.controller)
         try await waitUntil("the metadata reply did not publish topology") {
             topologyRecorder.latest?.panes.first(where: { $0.id == 0 })?.currentCommand
                 == "claude"
         }
-        // A deferred refresh would land within the throttle interval.
-        try await Task.sleep(for: .seconds(TmuxPaneMetadataRefreshThrottle.interval + 0.2))
-        await drain(harness.controller)
         XCTAssertTrue(
             harness.recorder.takeStrings().isEmpty,
             "a reply that keeps window names must not refresh again"
         )
+        XCTAssertEqual(timing.scheduledCount, 0)
     }
 
-    func testRepeatedWindowPaneMetadataRefreshIsDeferredToOneMoreRequest() async throws {
+    func testWindowPaneMetadataRefreshSendsCoalescesAndDefersOnce() async throws {
+        let timing = ControllerRefreshTiming()
         let harness = try await readyController(
             listWindowsBody: Self.threePaneZoomedWindow,
-            expectedPaneCount: 3
+            expectedPaneCount: 3,
+            paneMetadataRefreshTiming: timing.timing
         )
 
         for _ in 0..<3 {
@@ -171,11 +175,18 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
         }
         await drain(harness.controller)
         XCTAssertEqual(harness.recorder.takeStrings().count, 1)
+        XCTAssertEqual(timing.scheduledDelays, [TmuxPaneMetadataRefreshThrottle.interval])
 
-        try await waitUntil("the deferred refresh was not written") {
-            harness.recorder.hasWrites
-        }
+        timing.advance(by: TmuxPaneMetadataRefreshThrottle.interval)
+        timing.runScheduled()
+        await drain(harness.controller)
         XCTAssertEqual(harness.recorder.takeStrings().count, 1)
+
+        timing.advance(by: TmuxPaneMetadataRefreshThrottle.interval)
+        harness.controller.requestRefreshWindowPaneMetadata(windowID: 0)
+        await drain(harness.controller)
+        XCTAssertEqual(harness.recorder.takeStrings().count, 1)
+        XCTAssertEqual(timing.scheduledCount, 0)
     }
 
     func testWindowPaneMetadataRefreshIgnoresUnknownWindow() async throws {
@@ -1410,13 +1421,15 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
         listWindowsBody: String,
         expectedPaneCount: Int,
         callbacks: TmuxSessionController.Callbacks = .init(),
-        zoomOwner: TmuxZoomOwner? = nil
+        zoomOwner: TmuxZoomOwner? = nil,
+        paneMetadataRefreshTiming: TmuxPaneMetadataRefreshTiming = .live
     ) async throws -> ReadyControllerHarness {
         let harness = try await hydratingController(
             listWindowsBody: listWindowsBody,
             expectedPaneCount: expectedPaneCount,
             callbacks: callbacks,
-            zoomOwner: zoomOwner
+            zoomOwner: zoomOwner,
+            paneMetadataRefreshTiming: paneMetadataRefreshTiming
         )
         let hydrationEnd = harness.firstHydrationCommandNumber + harness.hydrationCommandCount
         let hydration = (harness.firstHydrationCommandNumber..<hydrationEnd)
@@ -1438,11 +1451,16 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
         listWindowsBody: String,
         expectedPaneCount: Int,
         callbacks: TmuxSessionController.Callbacks = .init(),
-        zoomOwner: TmuxZoomOwner? = nil
+        zoomOwner: TmuxZoomOwner? = nil,
+        paneMetadataRefreshTiming: TmuxPaneMetadataRefreshTiming = .live
     ) async throws -> HydratingControllerHarness {
         let runtime = try GhosttyKitRuntime()
         let recorder = ControllerOutboundRecorder()
-        let controller = TmuxSessionController(callbacks: callbacks, zoomOwner: zoomOwner)
+        let controller = TmuxSessionController(
+            callbacks: callbacks,
+            zoomOwner: zoomOwner,
+            paneMetadataRefreshTiming: paneMetadataRefreshTiming
+        )
         addTeardownBlock {
             await withCheckedContinuation { continuation in
                 controller.shutdown { continuation.resume() }
@@ -1754,4 +1772,41 @@ private final class ControllerTopologyRecorder: @unchecked Sendable {
 
 private final class MarksBox: @unchecked Sendable {
     var value: [TmuxZoomMark] = []
+}
+
+/// A manual clock and deferral queue for pane metadata refreshes.
+private final class ControllerRefreshTiming: @unchecked Sendable {
+    private let lock = NSLock()
+    private var now: TimeInterval = 100
+    private var scheduled: [(delay: TimeInterval, work: @Sendable () -> Void)] = []
+
+    var timing: TmuxPaneMetadataRefreshTiming {
+        TmuxPaneMetadataRefreshTiming(
+            now: { [self] in lock.withLock { now } },
+            schedule: { [self] delay, work in
+                lock.withLock { scheduled.append((delay, work)) }
+            }
+        )
+    }
+
+    var scheduledCount: Int {
+        lock.withLock { scheduled.count }
+    }
+
+    var scheduledDelays: [TimeInterval] {
+        lock.withLock { scheduled.map(\.delay) }
+    }
+
+    func advance(by interval: TimeInterval) {
+        lock.withLock { now += interval }
+    }
+
+    /// Runs the recorded deferrals; each hops onto the writer queue itself.
+    func runScheduled() {
+        let works = lock.withLock {
+            defer { scheduled.removeAll() }
+            return scheduled.map(\.work)
+        }
+        works.forEach { $0() }
+    }
 }

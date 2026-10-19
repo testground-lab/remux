@@ -31,3 +31,17 @@ struct TmuxPaneMetadataRefreshThrottle {
         lastSentAt[windowID] = now
     }
 }
+
+/// The monotonic clock and deferral behind pane metadata refreshes, injected
+/// so tests can drive the throttle without waiting.
+struct TmuxPaneMetadataRefreshTiming: Sendable {
+    var now: @Sendable () -> TimeInterval
+    var schedule: @Sendable (TimeInterval, @escaping @Sendable () -> Void) -> Void
+
+    static let live = TmuxPaneMetadataRefreshTiming(
+        now: { ProcessInfo.processInfo.systemUptime },
+        schedule: { delay, work in
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    )
+}

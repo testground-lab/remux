@@ -234,6 +234,7 @@ final class TmuxSessionController: @unchecked Sendable {
     private var successfulMutationRequiredAfterRevision: UInt64?
     private var viewportClaimAwaitingTopology = false
     private var topologyRevision: UInt64 = 0
+    private let paneMetadataRefreshTiming: TmuxPaneMetadataRefreshTiming
     private var paneMetadataRefreshThrottle = TmuxPaneMetadataRefreshThrottle()
     private var outboundSink: (@Sendable (Data) -> Void)?
     private var shuttingDown = false
@@ -241,11 +242,13 @@ final class TmuxSessionController: @unchecked Sendable {
     init(
         callbacks: Callbacks,
         zoomOwner: TmuxZoomOwner? = nil,
-        queue: DispatchQueue = DispatchQueue(label: "remux.tmux.session.writer")
+        queue: DispatchQueue = DispatchQueue(label: "remux.tmux.session.writer"),
+        paneMetadataRefreshTiming: TmuxPaneMetadataRefreshTiming = .live
     ) {
         self.callbacks = callbacks
         self.zoomOwner = zoomOwner
         self.queue = queue
+        self.paneMetadataRefreshTiming = paneMetadataRefreshTiming
     }
 
     deinit {
@@ -991,17 +994,19 @@ final class TmuxSessionController: @unchecked Sendable {
             guard canRefreshPaneMetadata(windowID: windowID) else { return }
             switch paneMetadataRefreshThrottle.request(
                 windowID,
-                now: ProcessInfo.processInfo.systemUptime
+                now: paneMetadataRefreshTiming.now()
             ) {
             case .send:
                 submitPaneMetadataRefreshOnWriter(windowID: windowID)
             case .sendAfter(let delay):
-                queue.asyncAfter(deadline: .now() + delay) { [self] in
-                    paneMetadataRefreshThrottle.sendDeferred(
-                        windowID,
-                        now: ProcessInfo.processInfo.systemUptime
-                    )
-                    submitPaneMetadataRefreshOnWriter(windowID: windowID)
+                paneMetadataRefreshTiming.schedule(delay) { [self] in
+                    queue.async { [self] in
+                        paneMetadataRefreshThrottle.sendDeferred(
+                            windowID,
+                            now: paneMetadataRefreshTiming.now()
+                        )
+                        submitPaneMetadataRefreshOnWriter(windowID: windowID)
+                    }
                 }
             case .coalesced:
                 break
