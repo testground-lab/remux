@@ -42,7 +42,7 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
                 forLocalPoint: CGPoint(x: 10, y: 20),
                 mouseCaptured: false
             ),
-            [.activateInput]
+            [.activateInput(.terminalKeyboard)]
         )
     }
 
@@ -55,7 +55,80 @@ final class GhosttySurfaceMouseEventTests: XCTestCase {
                 mouseCaptured: true
             ),
             [
-                .activateInput,
+                .activateInput(.terminalKeyboard),
+                .mousePosition(point),
+                .mouseButton(.init(state: .press, button: .left)),
+                .mouseButton(.init(state: .release, button: .left)),
+            ]
+        )
+    }
+
+    func testClaudeTapNearCursorRowOpensComposer() {
+        let cursor = CGRect(x: 40, y: 200, width: 8, height: 16)
+
+        for y in [CGFloat(205), 168, 247] {
+            XCTAssertEqual(
+                GhosttySurfaceTapGesture.input(
+                    forLocalPoint: CGPoint(x: 300, y: y),
+                    agent: .claudeCode,
+                    cursorFrame: cursor
+                ),
+                .composer,
+                "y=\(y)"
+            )
+        }
+    }
+
+    func testClaudeTapAwayFromCursorRowRaisesNoKeyboard() {
+        let cursor = CGRect(x: 40, y: 200, width: 8, height: 16)
+
+        for y in [CGFloat(167), 248, 20] {
+            XCTAssertEqual(
+                GhosttySurfaceTapGesture.input(
+                    forLocalPoint: CGPoint(x: 44, y: y),
+                    agent: .claudeCode,
+                    cursorFrame: cursor
+                ),
+                .focus,
+                "y=\(y)"
+            )
+        }
+    }
+
+    func testClaudeTapWithoutCursorRaisesNoKeyboard() {
+        XCTAssertEqual(
+            GhosttySurfaceTapGesture.input(
+                forLocalPoint: CGPoint(x: 10, y: 20),
+                agent: .claudeCode,
+                cursorFrame: nil
+            ),
+            .focus
+        )
+    }
+
+    func testNonAgentTapRaisesTerminalKeyboardAnywhere() {
+        XCTAssertEqual(
+            GhosttySurfaceTapGesture.input(
+                forLocalPoint: CGPoint(x: 10, y: 600),
+                agent: nil,
+                cursorFrame: CGRect(x: 40, y: 200, width: 8, height: 16)
+            ),
+            .terminalKeyboard
+        )
+    }
+
+    func testClaudeTapAwayFromCursorStillForwardsCapturedMouseClick() {
+        let point = CGPoint(x: 10, y: 20)
+
+        XCTAssertEqual(
+            GhosttySurfaceTapGesture.actions(
+                forLocalPoint: point,
+                mouseCaptured: true,
+                agent: .claudeCode,
+                cursorFrame: CGRect(x: 40, y: 200, width: 8, height: 16)
+            ),
+            [
+                .activateInput(.focus),
                 .mousePosition(point),
                 .mouseButton(.init(state: .press, button: .left)),
                 .mouseButton(.init(state: .release, button: .left)),

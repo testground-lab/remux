@@ -779,7 +779,7 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
 
     private func handleSurfaceTap(
         _ surfaceID: UUID,
-        shouldShowKeyboard: Bool
+        input: GhosttySurfaceTapInput
     ) {
         GhosttyRuntimeTrace.flowBegin(
             "terminal.input",
@@ -797,12 +797,20 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
             )
             return
         }
+        // tmux reports pane commands only at attach and layout changes, so
+        // refresh them for the agent check behind the next tap.
+        if let topLevelID = model.selectedPaneSheetPresentationProjection()?.topLevelID {
+            model.refreshPaneMetadata(inTopLevel: topLevelID)
+        }
         let isInputAvailable = isTerminalInputAvailable
         if !isActiveComposerPresented {
-            if shouldShowKeyboard {
-                showSystemKeyboard()
-            } else {
+            switch input {
+            case .focus:
                 refocusSystemKeyboardIfActive()
+            case .terminalKeyboard:
+                showSystemKeyboard()
+            case .composer:
+                openComposerWithKeyboard()
             }
         }
         GhosttyRuntimeTrace.flowEvent(
@@ -810,7 +818,7 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
             event: "ui.tap.surface.end",
             fields: [
                 "activated": "\(isInputAvailable)",
-                "keyboard_requested": "\(shouldShowKeyboard)",
+                "input": "\(input)",
             ]
         )
     }
@@ -881,6 +889,17 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
         withAnimation(GhosttyKeyboardChromeAnimation.composerTransition) {
             composer.open()
         }
+    }
+
+    private func openComposerWithKeyboard() {
+        guard isTerminalInputAvailable else { return }
+        openComposer()
+        guard isActiveComposerPresented else { return }
+        // An open terminal keyboard moves to the composer once its text view
+        // attaches; otherwise raise the keyboard for the composer directly.
+        guard inputCoordinator.keyboardMode != .system
+                || inputCoordinator.keyboardOwner != .terminal else { return }
+        showComposerKeyboard()
     }
 
     private func closeComposer() {

@@ -127,6 +127,21 @@ final class TmuxSessionControllerClientSizeTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(writes.first).isEmpty)
     }
 
+    func testWindowRenameRefreshesItsPaneMetadata() async throws {
+        let harness = try await readyController(
+            listWindowsBody: Self.threePaneZoomedWindow,
+            expectedPaneCount: 3
+        )
+
+        harness.controller.pump(Data("%window-renamed @0 claude\n".utf8))
+        await drain(harness.controller)
+        await drain(harness.controller)
+
+        let writes = harness.recorder.takeStrings()
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(try XCTUnwrap(writes.first).hasPrefix("list-panes -t @0 "))
+    }
+
     func testWindowPaneMetadataRefreshIgnoresUnknownWindow() async throws {
         let harness = try await readyController(
             listWindowsBody: Self.threePaneZoomedWindow,

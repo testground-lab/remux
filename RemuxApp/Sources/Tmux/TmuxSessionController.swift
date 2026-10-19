@@ -514,6 +514,9 @@ final class TmuxSessionController: @unchecked Sendable {
         let previousPaneIDs = Set(topology?.panes.map(\.id) ?? [])
         let nextPaneIDs = Set(snapshot.panes.map(\.id))
         let removed = previousPaneIDs.subtracting(nextPaneIDs).sorted()
+        let renamedWindowIDs = snapshot.windows.filter { window in
+            topology?.windows.contains { $0.id == window.id && $0.name != window.name } == true
+        }.map(\.id)
         topology = snapshot
         topologyRevision &+= 1
         clearSatisfiedMutationBarrier()
@@ -531,6 +534,12 @@ final class TmuxSessionController: @unchecked Sendable {
             self.callbacks.onTopology(snapshot)
         }
         admitDeferredMutationsIfPossible()
+
+        // tmux's automatic rename follows the active pane's command, and pane
+        // commands are otherwise only listed at attach and layout changes.
+        for windowID in renamedWindowIDs {
+            requestRefreshWindowPaneMetadata(windowID: windowID)
+        }
     }
 
     private func handlePaneChanged(_ paneID: TmuxPaneID) {

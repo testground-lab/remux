@@ -9,7 +9,7 @@ struct GhosttyCompositeViewportView: View {
     let projection: GhosttyTerminalViewportPresentationProjection
     let terminalTheme: TerminalTheme
     let trackpadDriver: GhosttyKeyboardCursorTrackpadDriver
-    let onSurfaceTap: ((UUID, Bool) -> Void)?
+    let onSurfaceTap: ((UUID, GhosttySurfaceTapInput) -> Void)?
     let onPreviewSelection: ((UUID, TerminalPreviewCandidate) -> Void)?
     let onWindowSwipe: ((GhosttyRuntimeSelectionDirection) -> Void)?
     let sendKeyEventToSurface: (GhosttySurfaceKeyEvent, UUID) -> Bool
@@ -44,7 +44,7 @@ private struct GhosttyCompositeViewportRepresentable: UIViewRepresentable {
     let projection: GhosttyTerminalViewportPresentationProjection
     let terminalTheme: TerminalTheme
     let trackpadDriver: GhosttyKeyboardCursorTrackpadDriver
-    let onSurfaceTap: ((UUID, Bool) -> Void)?
+    let onSurfaceTap: ((UUID, GhosttySurfaceTapInput) -> Void)?
     let onPreviewSelection: ((UUID, TerminalPreviewCandidate) -> Void)?
     let onWindowSwipe: ((GhosttyRuntimeSelectionDirection) -> Void)?
     let sendKeyEventToSurface: (GhosttySurfaceKeyEvent, UUID) -> Bool
@@ -105,7 +105,7 @@ private final class GhosttyCompositeViewportContainerView: UIView,
     private var separatorColor = UIColor.clear
     private var trackpadDriver: GhosttyKeyboardCursorTrackpadDriver?
 
-    private var onSurfaceTap: ((UUID, Bool) -> Void)?
+    private var onSurfaceTap: ((UUID, GhosttySurfaceTapInput) -> Void)?
     private var onPreviewSelection: ((UUID, TerminalPreviewCandidate) -> Void)?
     private var onWindowSwipe: ((GhosttyRuntimeSelectionDirection) -> Void)?
     private var sendKeyEventToSurface: ((GhosttySurfaceKeyEvent, UUID) -> Bool)?
@@ -221,7 +221,7 @@ private final class GhosttyCompositeViewportContainerView: UIView,
         projection: GhosttyTerminalViewportPresentationProjection,
         surfaceLookup: GhosttyManagedSurfaceLookup,
         trackpadDriver: GhosttyKeyboardCursorTrackpadDriver,
-        onSurfaceTap: ((UUID, Bool) -> Void)?,
+        onSurfaceTap: ((UUID, GhosttySurfaceTapInput) -> Void)?,
         onPreviewSelection: ((UUID, TerminalPreviewCandidate) -> Void)?,
         onWindowSwipe: ((GhosttyRuntimeSelectionDirection) -> Void)?,
         sendKeyEventToSurface: @escaping (GhosttySurfaceKeyEvent, UUID) -> Bool,
@@ -602,10 +602,10 @@ private final class GhosttyCompositeViewportContainerView: UIView,
         let visiblePaneCount = projection.panes.lazy.filter {
             $0.visibleFrame != nil
         }.count
-        let shouldShowKeyboard = visiblePaneCount == 1
+        let targetsFocusedPane = visiblePaneCount == 1
             || projection.focusedSurfaceID == surfaceID
-        if !shouldShowKeyboard {
-            onSurfaceTap?(surfaceID, false)
+        if !targetsFocusedPane {
+            onSurfaceTap?(surfaceID, .focus)
             return
         }
 
@@ -613,13 +613,17 @@ private final class GhosttyCompositeViewportContainerView: UIView,
         if container.consumeMomentumCatchTap() == true {
             return
         }
+        let agent = projection.panes.first(where: { $0.id == surfaceID })
+            .flatMap { GhosttyPaneAgent(currentCommand: $0.currentCommand) }
         for action in GhosttySurfaceTapGesture.actions(
             forLocalPoint: recognizer.location(in: surface.view),
-            mouseCaptured: mouseCaptured
+            mouseCaptured: mouseCaptured,
+            agent: agent,
+            cursorFrame: agent == nil ? nil : surface.controlSurface.cursorGeometry()
         ) {
             switch action {
-            case .activateInput:
-                onSurfaceTap?(surfaceID, true)
+            case .activateInput(let input):
+                onSurfaceTap?(surfaceID, input)
             case .mousePosition(let position):
                 _ = submitMousePosition?(surfaceID, position, [])
             case .mouseButton(let event):
