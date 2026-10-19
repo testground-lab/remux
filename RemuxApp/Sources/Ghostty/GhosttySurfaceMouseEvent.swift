@@ -142,18 +142,37 @@ struct GhosttySurfaceMouseScrollEvent: Equatable {
     }
 }
 
+enum GhosttySurfaceTapInput: Equatable {
+    /// Focuses the pane without raising a keyboard.
+    case focus
+    case terminalKeyboard
+    case composer
+}
+
 struct GhosttySurfaceTapGesture {
     enum Action: Equatable {
-        case activateInput
+        case activateInput(GhosttySurfaceTapInput)
         case mousePosition(CGPoint)
         case mouseButton(GhosttySurfaceMouseButtonEvent)
     }
 
+    /// Rows above or below the cursor that still count as a tap on an agent's
+    /// prompt. Only rows matter because the prompt spans the full width.
+    static let agentPromptRowTolerance: CGFloat = 2
+
     static func actions(
         forLocalPoint point: CGPoint,
-        mouseCaptured: Bool
+        mouseCaptured: Bool,
+        isClaudeCode: Bool = false,
+        cursorFrame: CGRect? = nil
     ) -> [Action] {
-        var actions: [Action] = [.activateInput]
+        var actions: [Action] = [
+            .activateInput(input(
+                forLocalPoint: point,
+                isClaudeCode: isClaudeCode,
+                cursorFrame: cursorFrame
+            )),
+        ]
         guard mouseCaptured else { return actions }
 
         actions.append(contentsOf: [
@@ -162,5 +181,18 @@ struct GhosttySurfaceTapGesture {
             .mouseButton(.init(state: .release, button: .left)),
         ])
         return actions
+    }
+
+    /// Agent panes are mostly driven by taps, so only a tap on the prompt
+    /// raises a keyboard, and it belongs to the composer.
+    static func input(
+        forLocalPoint point: CGPoint,
+        isClaudeCode: Bool,
+        cursorFrame: CGRect?
+    ) -> GhosttySurfaceTapInput {
+        guard isClaudeCode else { return .terminalKeyboard }
+        guard let cursorFrame, cursorFrame.height > 0 else { return .focus }
+        let rowOffset = ((point.y - cursorFrame.minY) / cursorFrame.height).rounded(.down)
+        return abs(rowOffset) <= agentPromptRowTolerance ? .composer : .focus
     }
 }

@@ -779,7 +779,7 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
 
     private func handleSurfaceTap(
         _ surfaceID: UUID,
-        shouldShowKeyboard: Bool
+        input: GhosttySurfaceTapInput
     ) {
         GhosttyRuntimeTrace.flowBegin(
             "terminal.input",
@@ -797,9 +797,16 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
             )
             return
         }
+        // tmux reports pane commands only at attach and layout changes, so
+        // refresh them for the agent check behind the next tap.
+        if let topLevelID = model.selectedPaneSheetPresentationProjection()?.topLevelID {
+            model.refreshPaneMetadata(inTopLevel: topLevelID)
+        }
         let isInputAvailable = isTerminalInputAvailable
-        if !isActiveComposerPresented {
-            if shouldShowKeyboard {
+        if input == .composer {
+            focusComposerFromTap()
+        } else if !isActiveComposerPresented {
+            if input == .terminalKeyboard {
                 showSystemKeyboard()
             } else {
                 refocusSystemKeyboardIfActive()
@@ -810,7 +817,7 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
             event: "ui.tap.surface.end",
             fields: [
                 "activated": "\(isInputAvailable)",
-                "keyboard_requested": "\(shouldShowKeyboard)",
+                "input": "\(input)",
             ]
         )
     }
@@ -883,6 +890,20 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
         }
     }
 
+    private func focusComposerFromTap() {
+        let composerWasPresented = isActiveComposerPresented
+        if !composerWasPresented {
+            guard isTerminalInputAvailable else { return }
+            openComposer()
+        }
+        guard isActiveComposerPresented,
+              !composer.dictationController.phase.isActive,
+              inputCoordinator.composerTapRequestsKeyboard(
+                  composerWasPresented: composerWasPresented
+              ) else { return }
+        showComposerKeyboard()
+    }
+
     private func closeComposer() {
         if inputCoordinator.keyboardMode == .system,
            inputCoordinator.keyboardOwner == .composer {
@@ -907,8 +928,13 @@ struct GhosttySurfaceScreen<Model: GhosttyTerminalScreenModeling>: View {
 
     private func handleComposerKeyboardResponderAttached() {
         guard isActiveComposerPresented,
-              inputCoordinator.keyboardMode == .system,
-              inputCoordinator.keyboardOwner == .terminal else { return }
+              inputCoordinator.keyboardMode == .system else { return }
+        if inputCoordinator.keyboardOwner == .composer {
+            // The keyboard was requested before the text view could take focus.
+            keyboardResponderHandoff.transfer(to: .composer)
+            return
+        }
+        guard inputCoordinator.keyboardOwner == .terminal else { return }
         guard keyboardResponderHandoff.transfer(to: .composer) else {
             GhosttyRuntimeTrace.perf(
                 "composer.toggle open handoff deferred composerResponderUnavailable"
